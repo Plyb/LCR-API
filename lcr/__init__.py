@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from datetime import date
 import re
 import json
 import logging
@@ -82,14 +83,35 @@ class API():
         self.driver.close()
         self.driver.quit()
 
-    def _make_request(self, request):
+    def _make_request(self, request, post = False):
         if self.beta:
             request['cookies'] = {'clerk-resources-beta-terms': '4.1',
                                   'clerk-resources-beta-eula': '4.2'}
 
-        response = self.session.get(**request)
+        response = self.session.post(**request) if post else self.session.get(**request) 
         response.raise_for_status()  # break on any non 200 status
         return response
+
+    def get_request(self, path, params = {}):
+        params['lang'] = 'eng'
+        return self._make_request({
+            'url': 'https://{}/{}'.format(
+                    LCR_DOMAIN,
+                    path
+                ),
+            'params': params
+        })
+
+    def post_request(self, path, params = {}):
+        return self._make_request({
+            'url': 'https://{}/{}'.format(
+                    LCR_DOMAIN,
+                    path
+                ),
+            'json': params,
+            'params': { 'lang': 'eng'}
+        }, True)
+    
 
     def birthday_list(self, month, months=1):
         _LOGGER.info("Getting birthday list")
@@ -210,3 +232,34 @@ class API():
                 }
         result = self._make_request(request)
         return result.json()
+
+    def calling_api(self):
+        return Callings(self)
+
+class Callings:
+    def __init__(self, api: API):
+        self.api = api
+
+        orgs_with_callings = api.get_request('services/orgs/sub-orgs-with-callings').json()
+        flattened_orgs = self._flatten_orgs(orgs_with_callings)
+        calling_lists = map(lambda org: org['callings'], flattened_orgs)
+        self.callings = [calling for callings in calling_lists for calling in callings]
+
+    def _flatten_orgs(self, orgs):
+        result = orgs
+        for org in orgs:
+            result += self._flatten_orgs(org['children'])
+        return result 
+
+    # def get_individual(self, name):
+    #     person_id = next(member['legacyCmisId'] for member in self.members if member['nameFormats']['listPreferredLocal'] == name)
+    #     return self.api.get_request('records/member-profile/service/{}'.format(person_id)).json()
+
+    def release_from_calling(self, position):
+        calling = next(calling for calling in self.callings if calling['position'] == position)
+        calling['vacant'] = True
+        calling['releaseDate'] = date.today().strftime("%Y%m%d")
+
+        self.api.post_request('services/orgs/callings', calling)
+        
+        
