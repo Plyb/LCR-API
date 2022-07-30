@@ -255,11 +255,15 @@ class Callings:
     #     person_id = next(member['legacyCmisId'] for member in self.members if member['nameFormats']['listPreferredLocal'] == name)
     #     return self.api.get_request('records/member-profile/service/{}'.format(person_id)).json()
 
-    def release_from_calling(self, position):
-        calling = next(calling for calling in self.callings if calling['position'] == position)
+    def release_from_calling(self, position, lastNameCommaFirst):
+        try: 
+            calling = next(calling for calling in self.callings if calling['position'] == position and calling['memberName'] == lastNameCommaFirst)
+        except StopIteration:
+            raise CallingNotFoundException("Could not find calling {calling} held by {lastNameCommaFirst}")
         calling['vacant'] = True
         calling['releaseDate'] = date.today().strftime("%Y%m%d")
 
         self.api.post_request('services/orgs/callings', calling)
         
-        
+class CallingNotFoundException(Exception):
+    pass
