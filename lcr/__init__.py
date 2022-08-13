@@ -29,7 +29,6 @@ if _LOGGER.getEffectiveLevel() <= logging.DEBUG:
 class InvalidCredentialsError(Exception):
     pass
 
-
 class API():
     def __init__(
             self, username, password, unit_number, beta=False,
@@ -249,21 +248,52 @@ class Callings:
         result = orgs
         for org in orgs:
             result += self._flatten_orgs(org['children'])
-        return result 
+        return result
 
-    # def get_individual(self, name):
-    #     person_id = next(member['legacyCmisId'] for member in self.members if member['nameFormats']['listPreferredLocal'] == name)
-    #     return self.api.get_request('records/member-profile/service/{}'.format(person_id)).json()
+    def _get_calling_by_name(self, position, lastNameCommaFirst = None, condition = lambda calling: True):
+        callings = [calling for calling in self.callings if calling['position'] == position and (calling['memberName'] == lastNameCommaFirst or lastNameCommaFirst == None)]
+        return single(list(filter(condition, callings)), 'calling')
 
     def release_from_calling(self, position, lastNameCommaFirst):
-        try: 
-            calling = next(calling for calling in self.callings if calling['position'] == position and calling['memberName'] == lastNameCommaFirst)
-        except StopIteration:
-            raise CallingNotFoundException("Could not find calling {calling} held by {lastNameCommaFirst}")
+        calling = self._get_calling_by_name(position, lastNameCommaFirst)
         calling['vacant'] = True
-        calling['releaseDate'] = date.today().strftime("%Y%m%d")
+        calling['releaseDate'] = to_lcr_date_format(date.today())
 
         self.api.post_request('services/orgs/callings', calling)
+
+    def call_to(self, position: str, lastNameCommaFirst: str, sustained_date: date, set_apart: bool = False, include_hidden = False):
+        calling = self._get_calling_by_name(position, condition=lambda calling: (calling['vacant'] or calling['memberName'] == lastNameCommaFirst) and (not calling['hidden'] or include_hidden))
+        member_response = self.api.get_request('services/orgs/lookup-calling-candidate-by-name', {
+            'term': lastNameCommaFirst,
+            'unitNumber': self.api.unit_number,
+            'subOrgId': calling['subOrgId'],
+            'includeOutOfUnitMembers': True,
+            'positionTypeId': calling['positionTypeId'],
+            '_': None
+        })
+        members = json.loads(member_response.text)
+        member = single(members, 'member')
+
+        calling['activeDate'] = to_lcr_date_format(sustained_date)
+        calling['memberId'] = member['id']
+        calling['setApart'] = set_apart
+        calling['vacant'] = False
+        calling['hidden'] = False
+
+        return self.api.post_request('services/orgs/callings', calling)
+
+def to_lcr_date_format(date: date):
+    return date.strftime("%Y%m%d")
+
+def single(list, itemName):
+    if len(list) > 1:
+        raise MultipleResponsesException('More than one {} found'.format(itemName))
+    elif len(list) == 0:
+        raise ItemNotFoundException('No {} found'.format(itemName))
+    return list[0]
         
-class CallingNotFoundException(Exception):
+class ItemNotFoundException(Exception):
+    pass
+
+class MultipleResponsesException(Exception):
     pass
